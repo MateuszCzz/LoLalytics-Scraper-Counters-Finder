@@ -31,68 +31,71 @@ CHAMPION_NAMES = [
     "Yasuo", "Yone", "Yorick", "Yuumi", "Zac", "Zed", "Zeri", "Ziggs", "Zilean", "Zyra", "Zoe"
 ]
 
-LANES = [
-     'top', 'jng', 'mid', 'bot', 'sup'
-     ]
+LANES = ['top', 'jng', 'mid', 'bot', 'sup']
 
 def generate_url(name):
-        formatted_name = name.lower()
-        return f"https://lolalytics.com/lol/{formatted_name}/build/?tier=diamond_plus"
+    formatted_name = name.lower()
+    return f"https://lolalytics.com/lol/{formatted_name}/build/?tier=diamond_plus"
 
 def format_data(element):
-        text = element.text.replace('\n', ' ').strip().split()
-        img_elements = element.find_elements(By.TAG_NAME, 'img')
-        img_alt = img_elements[0].get_attribute('alt') if img_elements else 'error'
+    text = element.text.replace('\n', ' ').strip().split()
+    img_elements = element.find_elements(By.TAG_NAME, 'img')
+    img_alt = img_elements[0].get_attribute('alt') if img_elements else 'error'
 
-        try:
-            win_rate_value = float(text[0].replace('%', ''))
-            win_rate_diff = round(win_rate_value - 50, 2)
-        except (ValueError, IndexError):
-            win_rate_diff = 'N/A'
+    try:
+        win_rate_value = float(text[0].replace('%', ''))
+        win_rate_diff = round(win_rate_value - 50, 2)
+    except (ValueError, IndexError):
+        win_rate_diff = 'N/A'
 
-        return {
-            "Name": img_alt,
-            "win_rate": text[0] if len(text) >= 1 else 'N/A',
-            "popularity": text[3] if len(text) >= 5 else 'N/A',
-            "games": text[4] if len(text) >= 5 else 'N/A',
-            "win_rate_diff": win_rate_diff
-        }
+    return {
+        "Name": img_alt,
+        "win_rate": text[0] if len(text) >= 1 else 'N/A',
+        "popularity": text[3] if len(text) >= 5 else 'N/A',
+        "games": text[4] if len(text) >= 5 else 'N/A',
+        "win_rate_diff": win_rate_diff
+    }
 
-def scrape_web(url):
-        driver = webdriver.Firefox( service=FirefoxService(GeckoDriverManager().install()))
-        driver.get(url)
+def scrape_web(driver, url):
+    driver.get(url)
 
-        body = driver.find_element(By.CSS_SELECTOR, 'body')
-        for _ in range(2):
-            body.send_keys(Keys.PAGE_DOWN)
-            time.sleep(0.1)
+    # Scroll down the page slightly to ensure content is loaded
+    body = driver.find_element(By.CSS_SELECTOR, 'body')
+    for _ in range(2):
+        body.send_keys(Keys.PAGE_DOWN)
+        time.sleep(1)
 
-        lane_data = {lane: {} for lane in LANES}
+    lane_data = {lane: {} for lane in LANES}
 
-        for i, lane in enumerate(LANES, start=2):
-            xpath = f"/html/body/main/div[6]/div[1]/div[{i}]/div[2]/div[1]"
-            parent_element = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, xpath)))
-            children = parent_element.find_elements(By.XPATH, "./*")
+    for i, lane in enumerate(LANES, start=2):
+        xpath = f"/html/body/main/div[6]/div[1]/div[{i}]/div[2]"
+        parent_element = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, xpath)))
 
-            for element in children:
-                data = format_data(element)
-                name = data.get("Name")
-                if name != 'error' and name != 'N/A':
-                    lane_data[lane][name] = data
+        # Scroll the parent element sideways to load more elements
+        driver.execute_script("arguments[0].scrollLeft += 1800;", parent_element)
+        time.sleep(1.5)  # Wait for the scrolling to take effect
 
-        driver.quit()
+        # Get all the children in the first div of parent_element in one go
+        children = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, f"{xpath}/div[1]/*"))
+        )
 
-        for lane in lane_data:
-            lane_data[lane] = dict(sorted(lane_data[lane].items(), key=lambda item: item[1]['win_rate_diff'], reverse=True))
+        for element in children:
+            data = format_data(element)
+            name = data.get("Name")
+            if name != 'error' and name != 'N/A':
+                lane_data[lane][name] = data
 
-        return lane_data
+    # Sort data by win rate difference
+    for lane in lane_data:
+        lane_data[lane] = dict(sorted(lane_data[lane].items(), key=lambda item: item[1]['win_rate_diff'], reverse=True))
+
+    return lane_data
 
 def save_data(full_name, data):
     """Save the champion's data to a file in the /data directory."""
-    # Create a valid filename by removing invalid characters
     filename = f"data/{full_name}.json".replace(" ", "_")
 
-    # Open the file and write the data
     try:
         with open(filename, 'w') as file:
             json.dump(data, file, indent=4)
@@ -100,8 +103,7 @@ def save_data(full_name, data):
     except IOError as e:
         print(f"Error saving data to file: {e}")
 
-
-def scrape_and_save(full_name):
+def scrape_and_save(driver, full_name):
     url = generate_url(full_name)
 
     filename = f"data/{full_name}.json".replace(" ", "_")
@@ -110,24 +112,22 @@ def scrape_and_save(full_name):
         print(f"Data for {full_name} already exists. Skipping...")
         return
 
-    data = scrape_web(url)
-    print(f"Data extracted for " + full_name)
+    data = scrape_web(driver, url)
+    print(f"Data extracted for {full_name}")
 
     save_data(full_name, data)
-    print(f"Data saved to {full_name}.json")
 
 if not os.path.exists('data'):
     os.makedirs('data')
 
-def scrape_and_save_subset(champion_names_subset):
+def scrape_and_save_subset(driver, champion_names_subset):
     for champion_name in champion_names_subset:
-        scrape_and_save(champion_name)
+        scrape_and_save(driver, champion_name)
 
 def split_champion_names(fifth):
     total_names = len(CHAMPION_NAMES)
     part_size = total_names // 5
 
-    # Handle the case where the list size isn't perfectly divisible by 5
     start_index = fifth * part_size
     if fifth == 4:  # The last part gets any remainder names
         champion_names_subset = CHAMPION_NAMES[start_index:]
@@ -136,7 +136,18 @@ def split_champion_names(fifth):
 
     return champion_names_subset
 
-os.environ['GH_TOKEN'] = "_"
-# fifth = 0  # Change this to 0, 1, 2, 3, or 4 to process different 1/5th of the list
-# champion_names_subset = split_champion_names(fifth)
-# scrape_and_save_subset(CHAMPION_NAMES)
+# Initialize the driver
+driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
+# if error input github token
+# os.environ['GH_TOKEN'] = "_"
+try:
+
+    # Process all champions
+    scrape_and_save_subset(driver, CHAMPION_NAMES)
+
+    # Process different 1/5th of the list; change fifth to 0, 1, 2, 3, or 4  
+    # fifth = 4  
+    # champion_names_subset = split_champion_names(fifth)
+    # scrape_and_save_subset(driver, champion_names_subset)
+finally:
+    driver.quit()
