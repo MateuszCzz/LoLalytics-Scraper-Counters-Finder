@@ -1,10 +1,10 @@
 # LoLalytics Scraper & Counters Finder
 
-**LSCF** is a Python script designed to help you find best champion choice in *League of Legends* by scraping champion data from the *LoLalytics* website and using that data to identify the best counter-picks based on your enemy's teamcomp.
+**LSCF** is a Python script designed to help you find the best champion choices in *League of Legends* by scraping champion data from the *LoLalytics* website. The data is then used to identify the best counter-picks based on the enemy team's composition.
 
 ## Features
-- Scrapes champion data from *Lolalytics*, into json files.
-- Allows you to input enemy champion picks and get suggestions for the best counter-picks based on real-time data.
+- Scrapes champion data from *Lolalytics* into JSON files.
+- Allows you to input enemy champion picks and receive suggestions for the best counter-picks based on real-time data.
 
 ## Usage
 
@@ -14,10 +14,13 @@
    The script will open a browser (using Selenium), navigate to the *Lolalytics* page, and retrieve relevant data for all champions.
    
    ```bash
-   python scraper.py
+   python scraper.py X
    ```
-   - You can choose to either run one big long blob of champions or run 5 scripts split into equal parts.
-   - The data will be stored in a structured format (e.g., JSON) for easy access during the game lobby phase.
+   - X should be an integer between 0 and 5.
+   - 0 means data for all champions will be scraped.
+   - Numbers between 1 and 5 represent subsets of champions, allowing you to split the scraping into 5 simultaneous scripts.
+
+   - The data will be stored in a structured format for easy access later.
 
 ### Part 2: Managing Data in the Game Lobby
 

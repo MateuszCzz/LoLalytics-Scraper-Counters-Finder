@@ -8,6 +8,7 @@ from selenium.webdriver.common.keys import Keys
 import time
 import json
 import os
+import argparse
 
 CHAMPION_NAMES = [
     "Ahri", "Aatrox", "Akali", "Akshan", "Alistar", "Amumu", "Anivia", "Annie",
@@ -31,11 +32,11 @@ CHAMPION_NAMES = [
     "Yasuo", "Yone", "Yorick", "Yuumi", "Zac", "Zed", "Zeri", "Ziggs", "Zilean", "Zyra", "Zoe"
 ]
 
-LANES = ['top', 'jng', 'mid', 'bot', 'sup']
+LANES = ['top', 'jungle', 'middle', 'bottom', 'support']
 
-def generate_url(name):
+def generate_url(name, lane):
     formatted_name = name.lower()
-    return f"https://lolalytics.com/lol/{formatted_name}/build/?tier=diamond_plus"
+    return f"https://lolalytics.com/lol/{formatted_name}/build/?lane={lane}&tier=diamond_plus"
 
 def format_data(element):
     text = element.text.replace('\n', ' ').strip().split()
@@ -61,40 +62,56 @@ def scrape_web(driver, url):
 
     # Scroll down the page slightly to ensure content is loaded
     body = driver.find_element(By.CSS_SELECTOR, 'body')
-    for _ in range(2):
+    for _ in range(3):
         body.send_keys(Keys.PAGE_DOWN)
-        time.sleep(1)
+        time.sleep(0.25)
+
+    # Find the element containing "Pick Rate"
+    pick_rate_value = None
+    try:
+        pick_rate_element = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'Pick Rate')]/preceding-sibling::div[contains(@class, 'font-bold')]"))
+        )
+        pick_rate_text = pick_rate_element.text
+        pick_rate_value = float(pick_rate_text.strip('%'))
+        
+    except Exception as e:
+        # Resource not found
+        print(f"Error finding pick rate")
+
+    # If pick rate is not found or is low, skip
+    if pick_rate_value is None or pick_rate_value < 0.5:
+        print(f"Skip, {url}")
+        return
 
     lane_data = {lane: {} for lane in LANES}
-
     for i, lane in enumerate(LANES, start=2):
         xpath = f"/html/body/main/div[6]/div[1]/div[{i}]/div[2]"
-        parent_element = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, xpath)))
+        parent_element = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, xpath)))
 
-        # Scroll the parent element sideways to load more elements
-        driver.execute_script("arguments[0].scrollLeft += 1800;", parent_element)
-        time.sleep(1.5)  # Wait for the scrolling to take effect
+        for _ in range(6):
+            # Get all the children
+            children = WebDriverWait(driver, 15).until(
+                EC.presence_of_all_elements_located((By.XPATH, f"{xpath}/div[1]/*"))
+            )
 
-        # Get all the children in the first div of parent_element in one go
-        children = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.XPATH, f"{xpath}/div[1]/*"))
-        )
-
-        for element in children:
-            data = format_data(element)
-            name = data.get("Name")
-            if name != 'error' and name != 'N/A':
-                lane_data[lane][name] = data
-
-    # Sort data by win rate difference
-    for lane in lane_data:
-        lane_data[lane] = dict(sorted(lane_data[lane].items(), key=lambda item: item[1]['win_rate_diff'], reverse=True))
+            for element in children:
+                data = format_data(element)
+                name = data.get("Name")
+                
+                if name != 'error' and name != 'N/A' and name not in lane_data[lane]:
+                    lane_data[lane][name] = data
+            
+            # Scroll the parent element sideways to load more elements
+            driver.execute_script("arguments[0].scrollLeft += 500;", parent_element)
+            time.sleep(0.5)
 
     return lane_data
 
-def save_data(full_name, data):
+
+def save_data(full_name, data, lane):
     """Save the champion's data to a file in the /data directory."""
-    filename = f"data/{full_name}.json".replace(" ", "_")
+    filename = f"data/{full_name}_{lane}.json".replace(" ", "_")
 
     try:
         with open(filename, 'w') as file:
@@ -104,21 +121,22 @@ def save_data(full_name, data):
         print(f"Error saving data to file: {e}")
 
 def scrape_and_save(driver, full_name):
-    url = generate_url(full_name)
+    for lane in LANES:
+        url = generate_url(full_name, lane)
 
-    filename = f"data/{full_name}.json".replace(" ", "_")
-    
-    if os.path.exists(filename):
-        print(f"Data for {full_name} already exists. Skipping...")
-        return
-
-    data = scrape_web(driver, url)
-    print(f"Data extracted for {full_name}")
-
-    save_data(full_name, data)
-
-if not os.path.exists('data'):
-    os.makedirs('data')
+        filename = f"data/{full_name}_{lane}.json".replace(" ", "_")
+        
+        if os.path.exists(filename):
+            print(f"Skip, Data for {full_name} {lane} already exists.")
+            continue
+        
+        data = scrape_web(driver, url)
+        
+        # if not empty save
+        if data:
+            print(f"Data extracted for {full_name} {lane} lane")
+            save_data(full_name, data, lane)
+        
 
 def scrape_and_save_subset(driver, champion_names_subset):
     for champion_name in champion_names_subset:
@@ -136,18 +154,28 @@ def split_champion_names(fifth):
 
     return champion_names_subset
 
-# Initialize the driver
-driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
-# if error input github token
+
+# If errors input your github token
 # os.environ['GH_TOKEN'] = "_"
-try:
 
-    # Process all champions
-    scrape_and_save_subset(driver, CHAMPION_NAMES)
+def main(fifth):
+    if not os.path.exists('data'):
+        os.makedirs('data')
+    
+    driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
 
-    # Process different 1/5th of the list; change fifth to 0, 1, 2, 3, or 4  
-    # fifth = 4  
-    # champion_names_subset = split_champion_names(fifth)
-    # scrape_and_save_subset(driver, champion_names_subset)
-finally:
-    driver.quit()
+    try:
+        if fifth == 0:
+            scrape_and_save_subset(driver, CHAMPION_NAMES)
+        else:
+            champion_names_subset = split_champion_names(fifth-1)
+            scrape_and_save_subset(driver, champion_names_subset)
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="Run scraping for a specific subset of champions.")
+    parser.add_argument('fifth', type=int, choices=range(6), help="Specify which 1/5th of the list to process (0 for all, 1-5 for subsets).")
+    args = parser.parse_args()
+    main(args.fifth)
